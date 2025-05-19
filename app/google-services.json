@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "604303276207",
+    "project_id": "to-do-app-dsm",
+    "storage_bucket": "to-do-app-dsm.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:604303276207:android:d72aa7e955741e711f7c5a",
+        "android_client_info": {
+          "package_name": "com.example.desafio2_dsm"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAURVUD1UcMkoRcocualR5IUxogrogl0wI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:604303276207:android:a52b77e8a5282a811f7c5a",
+        "android_client_info": {
+          "package_name": "com.udb.desafio2dsm"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAURVUD1UcMkoRcocualR5IUxogrogl0wI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
