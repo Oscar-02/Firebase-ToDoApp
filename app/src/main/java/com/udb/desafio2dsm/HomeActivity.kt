@@ -2,243 +2,160 @@ package com.udb.desafio2dsm
 
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.widget.Button
-import android.widget.EditText
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.core.widget.addTextChangedListener
+import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.database.DataSnapshot
-import com.google.firebase.database.DatabaseError
-import com.google.firebase.database.DatabaseReference
-import com.google.firebase.database.FirebaseDatabase
-import com.google.firebase.database.ValueEventListener
+import com.udb.desafio2dsm.adapter.ToDoAdapter
+import com.udb.desafio2dsm.api.ApiClient
+import com.udb.desafio2dsm.model.ToDo
+import retrofit2.Call
+import retrofit2.Callback
+import retrofit2.Response
 
 class HomeActivity : AppCompatActivity() {
 
     private lateinit var auth: FirebaseAuth
-    private lateinit var databaseRef: DatabaseReference
-    private lateinit var tareaAdapter: TareaAdapter
     private lateinit var recyclerView: RecyclerView
-    private val listaTareas = mutableListOf<Tarea>()
-    private var ultimoTituloEscrito = ""
-    private var ultimaDescripcionEscrita = ""
+    private lateinit var toDoAdapter: ToDoAdapter
+    private lateinit var logoutButton: Button
+
+    override fun onResume() {
+        super.onResume()
+        obtenerTareas()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContentView(R.layout.activity_home)
+
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
             insets
         }
 
-        val logoutButton = findViewById<Button>(R.id.logoutButton)
+        auth = FirebaseAuth.getInstance()
+        logoutButton = findViewById(R.id.logoutButton)
+        recyclerView = findViewById(R.id.recyclerView)
+
+        recyclerView.layoutManager = LinearLayoutManager(this)
+        toDoAdapter = ToDoAdapter(
+            emptyList(),
+            onEditClick = { tarea ->
+                val intent = Intent(this, EditTaskActivity::class.java)
+                intent.putExtra("tarea_id", tarea.id)
+                intent.putExtra("tarea_title", tarea.title)
+                intent.putExtra("tarea_description", tarea.description)
+                startActivity(intent)
+            },
+            onDeleteClick = { tarea ->
+                eliminarTarea(tarea.id)
+            },
+            onToggleDone = { tarea ->
+                toggleEstadoTarea(tarea)
+            }
+        )
+        recyclerView.adapter = toDoAdapter
+
         logoutButton.setOnClickListener {
             cerrarSesion()
         }
 
-        val prefs = getSharedPreferences("TareaDraft", MODE_PRIVATE)
-        ultimoTituloEscrito = prefs.getString("titulo", "") ?: ""
-        ultimaDescripcionEscrita = prefs.getString("descripcion", "") ?: ""
-
-// Limpiar SharedPreferences una vez que se restaura
-        prefs.edit().clear().apply()
-
-        auth = FirebaseAuth.getInstance()
-        recyclerView = findViewById(R.id.tareasRecyclerView)
-
-        tareaAdapter = TareaAdapter(listaTareas) { tarea ->
-            mostrarDialogoEditarTarea(tarea)
+        val addTaskButton = findViewById<com.google.android.material.floatingactionbutton.FloatingActionButton>(R.id.addTaskButton)
+        addTaskButton.setOnClickListener {
+            startActivity(Intent(this, AddTaskActivity::class.java))
         }
 
-        recyclerView.adapter = tareaAdapter
-
-        val uid = auth.currentUser?.uid
-        if (uid != null) {
-            databaseRef = FirebaseDatabase.getInstance().getReference("Tareas").child(uid)
-            cargarTareasDesdeFirebase()
-        } else {
-            irAlLogin("Sesión expirada")
-        }
-
-        // Botón para agregar tarea
-        val addButton = findViewById<com.google.android.material.floatingactionbutton.FloatingActionButton>(R.id.addTaskButton)
-        addButton.setOnClickListener {
-            mostrarDialogoAgregarTarea()
-        }
+        obtenerTareas()
     }
 
-    private fun cargarTareasDesdeFirebase() {
-        databaseRef.addValueEventListener(object : ValueEventListener {
-            override fun onDataChange(snapshot: DataSnapshot) {
-                listaTareas.clear()
-                for (tareaSnapshot in snapshot.children) {
-                    val tarea = tareaSnapshot.getValue(Tarea::class.java)
-                    if (tarea != null) {
-                        tarea.id = tareaSnapshot.key ?: ""
-                        listaTareas.add(tarea)
-                    }
+    private fun cerrarSesion() {
+        FirebaseAuth.getInstance().signOut()
+        val intent = Intent(this, LoginActivity::class.java)
+        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        startActivity(intent)
+    }
+
+    private fun obtenerTareas() {
+        val user = auth.currentUser
+        if (user == null) {
+            irAlLogin("Sesión expirada. Inicia sesión nuevamente.")
+            return
+        }
+
+        val nombreUsuario = user.displayName ?: user.email ?: "SinNombre"
+
+        ApiClient.toDoApiService.getAllToDos().enqueue(object : Callback<List<ToDo>> {
+            override fun onResponse(call: Call<List<ToDo>>, response: Response<List<ToDo>>) {
+                if (response.isSuccessful) {
+                    val todasLasTareas = response.body() ?: emptyList()
+                    val tareasUsuario = todasLasTareas.filter { it.createdBy == nombreUsuario }
+                    toDoAdapter.updateData(tareasUsuario)
+                } else {
+                    mostrarError("Error al obtener tareas: ${response.code()}")
                 }
-                tareaAdapter.actualizarLista(listaTareas)
             }
 
-            override fun onCancelled(error: DatabaseError) {
-                irAlLogin("Error de conexión: ${error.message}")
+            override fun onFailure(call: Call<List<ToDo>>, t: Throwable) {
+                mostrarError("Fallo en la conexión: ${t.message}")
             }
         })
     }
 
+    private fun mostrarError(mensaje: String) {
+        Toast.makeText(this, mensaje, Toast.LENGTH_LONG).show()
+        Log.e("HomeActivity", mensaje)
+    }
+
     private fun irAlLogin(mensaje: String) {
-        // Guardar datos si hay algo en el formulario
-        val prefs = getSharedPreferences("TareaDraft", MODE_PRIVATE)
-        val editor = prefs.edit()
-
-        // Supongamos que tenés acceso a los campos del diálogo (si está abierto)
-        // O podrías pasar los valores directamente a esta función
-        editor.putString("titulo", ultimoTituloEscrito)
-        editor.putString("descripcion", ultimaDescripcionEscrita)
-        editor.apply()
-
         Toast.makeText(this, mensaje, Toast.LENGTH_SHORT).show()
         val intent = Intent(this, LoginActivity::class.java)
         startActivity(intent)
         finish()
     }
 
-    private fun mostrarDialogoAgregarTarea() {
-        val dialogView = layoutInflater.inflate(R.layout.dialog_nueva_tarea, null)
-        val inputTitulo = dialogView.findViewById<EditText>(R.id.inputTitulo)
-        val inputDescripcion = dialogView.findViewById<EditText>(R.id.inputDescripcion)
-
-        inputTitulo.setText(ultimoTituloEscrito)
-        inputDescripcion.setText(ultimaDescripcionEscrita)
-
-        inputTitulo.addTextChangedListener {
-            ultimoTituloEscrito = it.toString()
-        }
-
-        inputDescripcion.addTextChangedListener {
-            ultimaDescripcionEscrita = it.toString()
-        }
-
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Nueva Tarea")
-            .setView(dialogView)
-            .setPositiveButton("Guardar") { _, _ ->
-                val titulo = inputTitulo.text.toString().trim()
-                val descripcion = inputDescripcion.text.toString().trim()
-
-                if (titulo.isNotEmpty()) {
-                    guardarTareaEnFirebase(titulo, descripcion)
+    private fun eliminarTarea(id: String) {
+        ApiClient.toDoApiService.deleteToDo(id).enqueue(object : Callback<Void> {
+            override fun onResponse(call: Call<Void>, response: Response<Void>) {
+                if (response.isSuccessful) {
+                    Toast.makeText(this@HomeActivity, "Tarea eliminada", Toast.LENGTH_SHORT).show()
+                    obtenerTareas() // recargar
                 } else {
-                    Toast.makeText(this, "El título no puede estar vacío", Toast.LENGTH_SHORT).show()
+                    mostrarError("Error al eliminar tarea")
                 }
             }
-            .setNegativeButton("Cancelar", null)
-            .create()
 
-        dialog.show()
+            override fun onFailure(call: Call<Void>, t: Throwable) {
+                mostrarError("Fallo: ${t.message}")
+            }
+        })
     }
 
-    private fun guardarTareaEnFirebase(titulo: String, descripcion: String) {
-        val nuevaId = databaseRef.push().key
-        if (nuevaId != null) {
-            val tarea = Tarea(
-                id = nuevaId,
-                titulo = titulo,
-                descripcion = descripcion,
-                timestamp = System.currentTimeMillis()
-            )
-            databaseRef.child(nuevaId).setValue(tarea)
-                .addOnSuccessListener {
-                    Toast.makeText(this, "Tarea guardada", Toast.LENGTH_SHORT).show()
+    private fun toggleEstadoTarea(tarea: ToDo) {
+        val nuevaTarea = tarea.copy(done = !tarea.done)
+        ApiClient.toDoApiService.updateToDo(tarea.id, nuevaTarea)
+            .enqueue(object : Callback<ToDo> {
+                override fun onResponse(call: Call<ToDo>, response: Response<ToDo>) {
+                    if (response.isSuccessful) {
+                        Toast.makeText(this@HomeActivity, "Tarea actualizada", Toast.LENGTH_SHORT).show()
+                        obtenerTareas()
+                    } else {
+                        mostrarError("Error al actualizar estado")
+                    }
                 }
-                .addOnFailureListener {
-                    Toast.makeText(this, "Error al guardar", Toast.LENGTH_SHORT).show()
+
+                override fun onFailure(call: Call<ToDo>, t: Throwable) {
+                    mostrarError("Fallo: ${t.message}")
                 }
-        }
-    }
-
-    private fun mostrarDialogoEditarTarea(tarea: Tarea) {
-        val dialogView = layoutInflater.inflate(R.layout.dialog_nueva_tarea, null)
-        val inputTitulo = dialogView.findViewById<EditText>(R.id.inputTitulo)
-        val inputDescripcion = dialogView.findViewById<EditText>(R.id.inputDescripcion)
-
-        inputTitulo.addTextChangedListener {
-            ultimoTituloEscrito = it.toString()
-        }
-
-        inputDescripcion.addTextChangedListener {
-            ultimaDescripcionEscrita = it.toString()
-        }
-
-        // Cargar datos existentes
-        inputTitulo.setText(tarea.titulo)
-        inputDescripcion.setText(tarea.descripcion)
-
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Editar Tarea")
-            .setView(dialogView)
-            .setPositiveButton("Guardar") { _, _ ->
-                val nuevoTitulo = inputTitulo.text.toString().trim()
-                val nuevaDescripcion = inputDescripcion.text.toString().trim()
-
-                if (nuevoTitulo.isNotEmpty()) {
-                    val tareaActualizada = tarea.copy(
-                        titulo = nuevoTitulo,
-                        descripcion = nuevaDescripcion
-                    )
-                    actualizarTareaEnFirebase(tareaActualizada)
-                } else {
-                    Toast.makeText(this, "El título no puede estar vacío", Toast.LENGTH_SHORT).show()
-                }
-            }
-            .setNegativeButton("Cancelar", null)
-            .setNeutralButton("Eliminar") { _, _ ->
-                eliminarTareaDeFirebase(tarea)
-            }
-            .create()
-
-        dialog.show()
-    }
-
-    private fun actualizarTareaEnFirebase(tarea: Tarea) {
-        databaseRef.child(tarea.id).setValue(tarea)
-            .addOnSuccessListener {
-                Toast.makeText(this, "Tarea actualizada", Toast.LENGTH_SHORT).show()
-            }
-            .addOnFailureListener {
-                Toast.makeText(this, "Error al actualizar", Toast.LENGTH_SHORT).show()
-            }
-    }
-
-    private fun eliminarTareaDeFirebase(tarea: Tarea) {
-        databaseRef.child(tarea.id).removeValue()
-            .addOnSuccessListener {
-                Toast.makeText(this, "Tarea eliminada", Toast.LENGTH_SHORT).show()
-            }
-            .addOnFailureListener {
-                Toast.makeText(this, "Error al eliminar", Toast.LENGTH_SHORT).show()
-            }
-    }
-
-    private fun cerrarSesion() {
-        // Cerrar sesión en Firebase
-        FirebaseAuth.getInstance().signOut()
-
-        // Limpiar datos temporales
-        getSharedPreferences("TareaDraft", MODE_PRIVATE).edit().clear().apply()
-
-        // Ir al Login
-        val intent = Intent(this, LoginActivity::class.java)
-        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-        startActivity(intent)
+            })
     }
 
 }
